@@ -38,12 +38,13 @@ struct OpenVINOEpProviderOptions {
   ConfigMap load_config_{};                      // JSON config map to load custom OV parameters.
   bool enable_causallm_{false};                  // Enables Causal LM Compilation for ORT GenAI OVEP Pass
   bool hint_enable_gqa_{false};                  // Opt-in support for com.microsoft::GroupQueryAttention.
+  bool hint_enable_gdn_{false};                  // Opt-in support for the GDN subset of LinearAttention.
   ReshapeMap reshape_input_{};                   // Used for reshaping the OV graph inputs shape at runtime.
   std::filesystem::path dump_subgraphs_path_{};  // Dump output path; non-empty means dump_subgraphs is enabled.
 
   static const std::unordered_set<std::string>& GetValidProviderKeys() {
     static const std::unordered_set<std::string> valid_keys = {
-        "load_config", "enable_causallm", "hint_enable_gqa", "reshape_input", "dump_subgraphs"};
+        "load_config", "enable_causallm", "hint_enable_gqa", "hint_enable_gdn", "reshape_input", "dump_subgraphs"};
     return valid_keys;
   }
 

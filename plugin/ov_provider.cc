@@ -362,20 +362,66 @@ OrtStatus* OpenVINOEpPlugin::InitializeSharedContext(const OrtGraph* ort_graph) 
   return nullptr;
 }
 
+static bool IsGdnSupported(const Ort::ConstNode& node, const OvDevice& device) {
+  int64_t query_heads = 0;
+  int64_t kv_heads = 0;
+  int64_t state_window = 0;
+  std::string update_rule = "gated_delta";
+  for (const auto& attr : node.GetAttributes()) {
+    const auto name = attr.GetName();
+    if (name == "q_num_heads") {
+      Ort::ThrowOnError(attr.GetValue(query_heads));
+    } else if (name == "kv_num_heads") {
+      Ort::ThrowOnError(attr.GetValue(kv_heads));
+    } else if (name == "state_window") {
+      Ort::ThrowOnError(attr.GetValue(state_window));
+    } else if (name == "update_rule") {
+      Ort::ThrowOnError(attr.GetValue(update_rule));
+    }
+  }
+  if (query_heads <= 0 || query_heads != kv_heads || state_window != 0 || update_rule != "gated_delta") {
+    return false;
+  }
+  if (device.IsDeviceType("NPU") || device.IsMetaDevice()) {
+    // NPU compiler 8.5 miscomputes small-head prefill. Limit the opt-in to validated 128-wide heads.
+    const auto inputs = node.GetInputs();
+    if (inputs.size() < 3) {
+      return false;
+    }
+    for (size_t i = 0; i < 3; ++i) {
+      if (!inputs[i] || inputs[i].TypeInfo().GetONNXType() != ONNX_TYPE_TENSOR) {
+        return false;
+      }
+      const auto shape = inputs[i].TypeInfo().GetTensorTypeAndShapeInfo().GetShape();
+      if (shape.size() != 3 || shape[2] <= 0 || shape[2] % query_heads != 0 ||
+          shape[2] / query_heads != 128) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // Checks that a node and all nodes within its subgraphs (If/Loop/Scan) are supported.
-static bool NodeAndSubnodesSupported(const Ort::ConstNode& node, const OpenVINOEpProviderOptions& options) {
+static bool NodeAndSubnodesSupported(const Ort::ConstNode& node, const OpenVINOEpProviderOptions& options,
+                                     const OvDevice& device) {
   // The hint only adds support; it must not veto GQA once the supported-op list enables it.
   const bool gqa_opt_in = options.hint_enable_gqa_ &&
                           node.GetOperatorType() == std::string_view{"GroupQueryAttention"} &&
                           node.GetDomain() == std::string_view{"com.microsoft"} &&
                           OpenVINOVersion::GetBuiltVersion() >= OpenVINOVersion(2026, 3);
-  if (!SupportedOps::Get().IsOpSupported(node) && !gqa_opt_in) {
+  const bool gdn_opt_in = options.hint_enable_gdn_ &&
+                          node.GetOperatorType() == std::string_view{"LinearAttention"} &&
+                          node.GetDomain() == std::string_view{"com.microsoft"} &&
+                          OpenVINOVersion::GetBuiltVersion() >= OpenVINOVersion(2026, 5) &&
+                          IsGdnSupported(node, device);
+  if (!SupportedOps::Get().IsOpSupported(node) && !gqa_opt_in && !gdn_opt_in) {
     return false;
   }
 
   for (const auto& [attr_name, ort_subgraph] : node.GetSubgraphs()) {
     for (const auto& sub_node : Ort::ConstGraph{ort_subgraph}.GetNodes()) {
-      if (!NodeAndSubnodesSupported(sub_node, options)) {
+      if (!NodeAndSubnodesSupported(sub_node, options, device)) {
         return false;
       }
     }
@@ -422,7 +468,7 @@ OrtStatus* OpenVINOEpPlugin::GetCapability(const OrtGraph* graph, OrtEpGraphSupp
     std::vector<const OrtNode*> supported_nodes;
     for (const auto& node : nodes) {
       // We still check for ep context node since there might be ep context nodes from other providers and we want to skip those.
-      if (!EpContextNode::IsEpContextNode(node) && NodeAndSubnodesSupported(node, options_.provider_options_)) {
+      if (!EpContextNode::IsEpContextNode(node) && NodeAndSubnodesSupported(node, options_.provider_options_, ov_device_)) {
         supported_nodes.push_back(node);
       } else {
         // Flush accumulated supported nodes before the break

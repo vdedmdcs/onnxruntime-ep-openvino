@@ -138,9 +138,10 @@ void OpenVINOEpPluginOptions::ParseProviderOptions(const Ort::Logger& logger, Or
                                       "'. Valid values are: 'true', 'false', '1', '0' (case insensitive)";
         ORT_CXX_API_THROW(error_msg, ORT_INVALID_ARGUMENT);
       }
-    } else if (key == "hint_enable_gqa") {
+    } else if (key == "hint_enable_gqa" || key == "hint_enable_gdn") {
       if (auto bool_val = parse_bool(value)) {
-        provider_options_.hint_enable_gqa_ = *bool_val;
+        auto& hint = key == "hint_enable_gqa" ? provider_options_.hint_enable_gqa_ : provider_options_.hint_enable_gdn_;
+        hint = *bool_val;
       } else {
         const std::string error_msg = "Invalid boolean value '" + value + "' for option '" + key +
                                       "'. Valid values are: 'true', 'false', '1', '0'";

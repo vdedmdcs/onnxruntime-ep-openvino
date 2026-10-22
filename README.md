@@ -84,6 +84,27 @@ GQA is currently unsupported by default. This option only enables support;
 `false`, `0`, or omission cannot disable support provided by the operator list or
 `ORT_OPENVINO_ACCEPT_OPS`.
 
+`hint_enable_gdn` uses the same Boolean values and defaults to `false`.
+It opts into `com.microsoft::LinearAttention` conversion with the matching
+OpenVINO 2026.5 development frontend. The implemented subset is
+`update_rule="gated_delta"`, equal positive query/key-value head counts,
+per-head log-space decay, per-head or shared beta, and `state_window=0`.
+Query/key normalization must already be represented in the input graph.
+Unsupported variants fail conversion rather than changing the recurrence.
+Device compilation and numerical validation are still required; recognizing
+an operator in the frontend alone does not prove NPU execution.
+For NPU (and AUTO), this opt-in additionally requires statically known packed
+widths corresponding to 128-element query/key/value heads.
+Native compiler 8.5 produced incorrect prefill results
+for a 4-element-head diagnostic, so other widths are deliberately not claimed
+by this option. Disable CPU EP fallback when requiring an all-NPU graph.
+
+This is experimental support, not an accuracy qualification. The native
+default-precision GDN path can zero small FP32 recurrent states even in an
+identity update; FP32 external tensor types do not guarantee FP32 arithmetic.
+Validate attention outputs and recurrent states on the target device before
+enabling this option in an application.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
